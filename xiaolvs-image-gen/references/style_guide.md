@@ -1,0 +1,1 @@
+../../xiaolvs-image-writer/references/style_guide.md

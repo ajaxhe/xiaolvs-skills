@@ -1,0 +1,1 @@
+../../xiaolvs-image-writer/scripts/xhs_publish.py

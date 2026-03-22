@@ -1,0 +1,1 @@
+../../xiaolvs-image-writer/scripts/start_bot.sh

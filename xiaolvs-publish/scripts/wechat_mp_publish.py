@@ -1,0 +1,1 @@
+../../xiaolvs-image-writer/scripts/wechat_mp_publish.py

@@ -1,0 +1,1 @@
+../../xiaolvs-image-writer/scripts/generate_images.py

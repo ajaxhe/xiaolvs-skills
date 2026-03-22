@@ -1,0 +1,1 @@
+../../xiaolvs-image-writer/scripts/gemini_generate_images_browser.py
