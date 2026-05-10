@@ -9,6 +9,45 @@ description: 小绿书发布到小红书和微信公众号。当用户需要将�
 
 将已生成的信息图 + 文案自动发布到**小红书**和**微信公众号**平台，默认创建草稿供用户检查后手动发布。
 
+### CDP 模式（推荐，必须使用）
+
+**必须使用 `--cdp` 模式**，通过 Chrome DevTools Protocol 连接用户真实 Chrome 浏览器，绕过平台的自动化检测。**不走 CDP 的 Playwright 模式极易被平台检测为自动化操作导致封号。**
+
+**CDP Chrome 启动方式**（使用独立 profile 目录）：
+```bash
+# ⚠️ macOS Chrome 不支持在默认 user-data-dir 上开 CDP
+# 必须指定独立 --user-data-dir
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+    --remote-debugging-port=9222 \
+    --user-data-dir="$HOME/.config/google-chrome-cdp" &
+```
+
+> **⚠️ 关键限制**：macOS Chrome 在默认 data directory 上启动 CDP 会报错 `DevTools remote debugging requires a non-default data directory`。必须使用独立 profile 目录 `~/.config/google-chrome-cdp`。
+
+### CDP 登录态管理
+
+1. **首次使用**：启动 CDP Chrome 后需要手动登录小红书和微信公众号（扫码）
+2. **登录态持久化**：登录后 session 保存在 `~/.config/google-chrome-cdp/` 中，后续无需重新登录
+3. **发布前必须检查登录态**：执行发布脚本前，先用 Playwright 连接 CDP 打开目标平台页面，检查是否跳转到 login 页。如果未登录，**等待用户扫码登录完成后**再执行发布脚本
+4. **检查登录态的代码模式**：
+
+```python
+# 在执行发布前先确认登录态
+async with async_playwright() as p:
+    browser = await p.chromium.connect_over_cdp('http://localhost:9222')
+    context = browser.contexts[0]
+    page = await context.new_page()
+    await page.goto('https://creator.xiaohongshu.com/publish/publish')
+    # 等待最多120秒直到不再是登录页面
+    for i in range(60):
+        await asyncio.sleep(2)
+        if 'login' not in page.url.lower() and 'passport' not in page.url.lower():
+            print('登录确认成功')
+            break
+```
+
+5. **脚本检测到未登录时不应直接退出**：应打开登录页面并等待用户扫码，而非打印错误直接退出。如果当前脚本实现是直接退出的，需要在执行脚本前手动完成登录检查
+
 ### 前置条件
 
 本 skill 假设以下文件已存在于项目子目录：
