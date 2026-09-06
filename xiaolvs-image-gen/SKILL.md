@@ -9,15 +9,15 @@ description: 小绿书图文生成。当用户需要将文章/观点生成手绘
 
 将文章分析结果转化为**多张手绘风格竖版信息图 + 配套公众号文案 + 话题标签**。
 
-**默认使用 Gemini Nano Banana Pro（3:4 竖版）生成图片**，通过 Gemini 3 Pro 模型 + 图片生成工具激活，利用 Gemini Pro 订阅配额，无额外 API token 消耗。认证通过 Chrome CDP 模式直接复用用户浏览器的 Google 登录态，无需手动配置。
+**通道路由（2026-09-06 更新，按用户长期偏好排序）**：
+1. **ChatGPT 网页 CDP（用户首选）**——`scripts/chatgpt_generate_images_browser.py`，CDP 驱动 chatgpt.com/images，走 ChatGPT 订阅配额，无 API token 消耗，中文渲染质量好。用户明确要求「走 chatgpt image 通道」时必须用此通道，不要用内置 ImageGen API 代替
+2. **Gemini 网页 CDP（备选）**——`scripts/gemini_generate_images_browser.py`，Gemini Nano Banana Pro（3:4 竖版），走 Gemini Pro 订阅配额
+3. **NotebookLM API（备选）**——仅当用户明确要求时使用
+4. **OpenAI Images API（备选）**——`scripts/openai_generate_images.py`，gpt-image-1.5，需 OPENAI_API_KEY，消耗 API 额度
 
-**脚本自动完成以下设置**（对应网页端手动操作）：
-1. 选择「Pro」模型（等价于网页端切换到 Pro 模式）
-2. 启用「生成图片 🍌」工具（等价于网页端点击 Nano Banana 图片生成工具）
-3. 设置 Pro 质量模式（高质量图片输出）
-4. 启用「临时对话」模式（等价于网页端点击「临时对话」，生成的会话不会保存到 Gemini 聊天历史）
-
-仅当用户**明确要求使用 NotebookLM 生成信息图**时，才走 NotebookLM 信息图 API 通道。
+**⛔ 编排纪律（2026-09-06 用户明确要求）**：
+- **生成阶段一次跑完**：用 `--until-done` 主循环模式后台一次跑完全部图片（撞配额自动等待续跑），**不要每生成一张图就停下来等用户输入「继续」**
+- **只有人工环节才停下**：登录、扫码、授权等需要人工操作的环节，停下来等用户确认后再继续，不要后台轮询
 
 ### 前置条件
 
@@ -323,6 +323,8 @@ python scripts/gemini_generate_images.py generate \
      ...
    图片已保存在 <项目子目录>/ 下，请在 IDE 或 Finder 中预览。
    ```
+   - **WorkBuddy 环境**：用 `present_files` 把全部图片 + copywriting.txt 一次性呈现为卡片供用户预览（比让用户自己去 Finder 找更顺畅）
+   - **交付前必须逐张验证**（2026-09-06 教训）：不能只看文件存在。校验 PNG 真实格式（`file` 命令）、尺寸宽度 ≥900、文件 >500KB、多张 MD5 互不相同，并逐张查看内容确认主题正确。曾经发生过把 512x512 WebP 缩略图当成果交付的事故
 2. **展示 `copywriting.txt` 文案全文**（纯文本，可安全 read_file）
 3. 收集用户反馈，可能的迭代方向：
    - 风格调整 → 修改提示词风格描述（参考 `references/style_guide.md`）
@@ -392,10 +394,52 @@ python scripts/generate_images.py generate \
 
 | 文件 | 用途 |
 |------|------|
-| `scripts/gemini_generate_images_browser.py` | **默认**图片生成脚本（浏览器 CDP 模式） |
+| `scripts/gemini_generate_images_browser.py` | **备选**图片生成脚本（Gemini 网页 CDP 模式，端口 9222） |
 | `scripts/gemini_generate_images.py` | **备选**图片生成脚本（gemini-webapi 库模式） |
 | `scripts/generate_images.py` | **备选**信息图生成脚本（NotebookLM API） |
+| `scripts/openai_generate_images.py` | **备选** OpenAI Images API 通道（gpt-image-1.5，需 OPENAI_API_KEY） |
+| `scripts/chatgpt_generate_images_browser.py` | **用户首选** ChatGPT 网页 CDP 通道（chatgpt.com/images，端口 9223，走 ChatGPT 订阅配额，支持 --until-done 无人值守主循环） |
 | `references/style_guide.md` | 手绘风格规范、STYLE_PREFIX 完整文本、视觉元素库 |
 | `references/notebooklm_api.md` | NotebookLM Python API 参考、配额限制说明 |
 | `references/terminology.json` | 英文术语保留词库 |
 | `references/copywriting_guide.md` | 公众号文案结构、语言风格、话题标签选取规范 |
+
+## ChatGPT 网页 CDP 通道（chatgpt_generate_images_browser.py）
+
+当用户明确要求「走 ChatGPT 网页版 / chatgpt.com/images 生成」时使用：
+
+```bash
+# 注意：必须用带 playwright 的 venv python（系统 python3 没装 playwright）
+PY=/Users/helufan/.workbuddy/binaries/python/envs/default/bin/python
+
+# 首次登录（打开 CDP Chrome 后立即退出，人工登录，确认后再继续——不要轮询）
+$PY scripts/chatgpt_generate_images_browser.py login
+# 检查登录态
+$PY scripts/chatgpt_generate_images_browser.py auth
+
+# 批量生成（推荐）：--until-done 主循环模式，全自动跑完，无需人工干预
+#   - 每轮只生成缺失文件（校验：真实 PNG 魔数 + >100KB，缩略图不算数）
+#   - 撞配额自动等 --quota-wait-minutes（默认 15 分钟）后续跑，直到全部完成
+#   - 后台运行一次即可，不要在对话里每张图问一次「继续」
+$PY -u scripts/chatgpt_generate_images_browser.py generate --until-done \
+    --config <项目子目录>/chatgpt_charts_config.json \
+    --output-dir <项目子目录> \
+    --quota-wait-minutes 15 --max-hours 8
+
+# 单次模式（支持 --skip-existing 断点续跑，跳过校验合格的已有文件）
+$PY scripts/chatgpt_generate_images_browser.py generate \
+    --config <项目子目录>/chatgpt_charts_config.json \
+    --output-dir <项目子目录> --skip-existing
+```
+
+关键经验（2026-08-30 踩坑实录，2026-09-06 增补）：
+- **端口 9223**、profile `~/.chatgpt_browser/chrome_cdp_profile`，与 Gemini 通道（9222）互不影响
+- **WorkBuddy Bash 沙盒会杀 Chrome**（报 `sandbox initialization failed` + GPU FATAL）：必须加 `--no-sandbox --disable-gpu`，或 dangerouslyDisableSandbox 运行
+- **环境变量里的代理可能是死端口**：脚本 `_detect_proxy` 有 TCP 存活探测 + scutil 兜底
+- **生成图检测**：真实 URL 是 `chatgpt.com/backend-api/estuary/content?id=file_...`（不是 oaiusercontent）；必须提交前快照已有 src、只接受新 src、只接受宽度 ≥900（512x512 WebP 是缩略图）
+- **下载必须页面内 fetch**（page.evaluate）：`context.request` 是 Node 侧直连不走代理会 TLS 断连
+- **产物必须校验**（`_is_valid_output`）：PNG 魔数 + >100KB；未校验时曾把 512x512 WebP 缩略图当成果交付
+- **免费版有图片配额**（每天数张，页面显示「还可生成剩 0 张图片」+ 重置时间）：脚本 `_quota_exhausted` 自动检测，撞配额标记 status="quota" 并停止本轮；`--until-done` 主循环等 15 分钟后自动续跑，直到 6 张全部生成（2026-09-06 实测单张约 1 分钟，配额充足时一轮跑完）
+- **CDP Chrome 跑一周会挂死**（/json/version 有响应但 connect_over_cdp 超时 180s）：pkill 后重启即可，登录态在 profile 里不受影响
+- **CDP 空白 profile 会让用户「Chrome 配置丢失」**：可 rsync 主 profile（排除 `Network/` 保留已登录 cookies、排除缓存/锁文件）同步书签/扩展/偏好
+- **登录等人工环节不轮询**：停下来等用户确认再继续（用户明确要求）；但生成阶段相反——用 --until-done 一次跑完，不要每张图停下来问
